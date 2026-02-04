@@ -23,6 +23,35 @@ export type ProviderContext = {
   options: Record<string, any>
 }
 
+/**
+ * Runtime API for making LLM completion calls from plugins.
+ *
+ * This allows plugins to make LLM calls without disrupting the active session.
+ */
+export type RuntimeAPI = {
+  /**
+   * Stream LLM completion with deltas.
+   */
+  stream: (input: {
+    prompt: string
+    systemPrompt?: string
+    model?: { providerID: string; modelID: string }
+    temperature?: number
+    maxTokens?: number
+    small?: boolean
+  }) => AsyncGenerator<string, { text: string; usage?: { promptTokens: number; completionTokens: number } }>
+
+  /**
+   * Get available providers.
+   */
+  getProviders: () => Promise<Array<{ id: string; name: string }>>
+
+  /**
+   * Get available models for a provider.
+   */
+  getModels: (providerID?: string) => Promise<Array<{ id: string; provider: string; name: string }>>
+}
+
 export type PluginInput = {
   client: ReturnType<typeof createOpencodeClient>
   project: Project
@@ -30,6 +59,12 @@ export type PluginInput = {
   worktree: string
   serverUrl: URL
   $: BunShell
+  /**
+   * Runtime API for making LLM completion calls.
+   * Use this for generating summaries, titles, or other LLM tasks
+   * without disrupting the active session.
+   */
+  runtime?: RuntimeAPI
 }
 
 export type Plugin = (input: PluginInput) => Promise<Hooks>

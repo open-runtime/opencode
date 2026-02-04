@@ -1,4 +1,4 @@
-import type { Hooks, PluginInput, Plugin as PluginInstance } from "@opencode-ai/plugin"
+import type { Hooks, PluginInput, Plugin as PluginInstance, RuntimeAPI } from "@opencode-ai/plugin"
 import { Config } from "../config/config"
 import { Bus } from "../bus"
 import { Log } from "../util/log"
@@ -11,6 +11,10 @@ import { CodexAuthPlugin } from "./codex"
 import { Session } from "../session"
 import { NamedError } from "@opencode-ai/util/error"
 import { CopilotAuthPlugin } from "./copilot"
+import { LLM } from "../session/llm"
+import { Provider } from "../provider/provider"
+import { Agent } from "../agent/agent"
+import * as crypto from "crypto"
 
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
@@ -28,6 +32,85 @@ export namespace Plugin {
     })
     const config = await Config.get()
     const hooks: Hooks[] = []
+
+    // Create the runtime API for plugin LLM access
+    const runtime: RuntimeAPI = {
+      stream: async function* (params) {
+        const modelSpec = params.model ?? (await Provider.defaultModel?.()) ?? {
+          providerID: "anthropic",
+          modelID: "claude-sonnet-4-20250514",
+        }
+
+        let model: Provider.Model
+        try {
+          model = await Provider.getModel(modelSpec.providerID, modelSpec.modelID)
+        } catch {
+          model = { providerID: modelSpec.providerID, id: modelSpec.modelID } as Provider.Model
+        }
+
+        let agent: Agent.Info
+        try {
+          agent = (await Agent.get("title")) ?? (await Agent.get("coder"))!
+        } catch {
+          agent = { name: "runtime", id: "runtime" } as Agent.Info
+        }
+
+        const requestId = crypto.randomUUID()
+        const result = await LLM.stream({
+          agent,
+          user: {
+            id: crypto.randomUUID(),
+            role: "user",
+            sessionID: `plugin-runtime-${requestId}`,
+            model: modelSpec,
+            time: { created: Date.now() },
+          },
+          system: params.systemPrompt ? [params.systemPrompt] : [],
+          small: params.small ?? false,
+          tools: {},
+          model,
+          abort: new AbortController().signal,
+          sessionID: `plugin-runtime-${requestId}`,
+          retries: 2,
+          messages: [{ role: "user", content: params.prompt }],
+        })
+
+        let finalText = ""
+        let usage = { promptTokens: 0, completionTokens: 0 }
+
+        try {
+          for await (const chunk of result.textStream) {
+            if (chunk) {
+              finalText += chunk
+              yield chunk
+            }
+          }
+          usage = (await result.usage) ?? usage
+        } catch (e) {
+          log.error("runtime stream error", { error: e })
+        }
+
+        return { text: finalText, usage }
+      },
+
+      getProviders: async () => {
+        const providers = await Provider.list()
+        return providers.map((p) => ({
+          id: p.id ?? "",
+          name: p.name ?? p.id ?? "",
+        }))
+      },
+
+      getModels: async (providerID?: string) => {
+        const models = providerID ? await Provider.listModels(providerID) : await Provider.listModels()
+        return models.map((m) => ({
+          id: m.id ?? "",
+          provider: m.providerID ?? "",
+          name: m.name ?? m.id ?? "",
+        }))
+      },
+    }
+
     const input: PluginInput = {
       client,
       project: Instance.project,
@@ -35,6 +118,7 @@ export namespace Plugin {
       directory: Instance.directory,
       serverUrl: Server.url(),
       $: Bun.$,
+      runtime,
     }
 
     for (const plugin of INTERNAL_PLUGINS) {
