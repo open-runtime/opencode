@@ -52,6 +52,7 @@ jobs:
             | Platform | Architecture | Download |
             |----------|--------------|----------|
             | Linux | x64 | `opencode-linux-x64.tar.gz` |
+            | Linux | arm64 | `opencode-linux-arm64.tar.gz` |
             | macOS | x64 (Intel) | `opencode-darwin-x64.zip` |
             | macOS | arm64 (Apple Silicon) | `opencode-darwin-arm64.zip` |
             | Windows | x64 | `opencode-windows-x64.zip` |
@@ -64,18 +65,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Linux x64 - standard GitHub runner
+          - os: ubuntu-24.04
             platform: linux
             arch: x64
             ext: tar.gz
+          # Linux ARM64 - GitHub ARM runner
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            ext: tar.gz
+          # macOS ARM64 (Apple Silicon) - standard GitHub runner
           - os: macos-latest
             platform: darwin
             arch: arm64
             ext: zip
-          - os: macos-13
+          # macOS x64 (Intel) - large runner for Intel Mac
+          - os: macos-15-large
             platform: darwin
             arch: x64
             ext: zip
+          # Windows x64 - standard GitHub runner
           - os: windows-latest
             platform: windows
             arch: x64
