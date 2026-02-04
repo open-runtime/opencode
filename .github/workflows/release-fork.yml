@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., 1.1.48-fork.1)"
+        description: "Version to release (e.g., 1.1.48-open-runtime-fork.1)"
         required: true
         type: string
   push:
@@ -19,26 +19,67 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: OpenCode Fork v${{ steps.version.outputs.version }}
+          draft: true
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          body: |
+            ## OpenCode Fork Release v${{ steps.version.outputs.version }}
+
+            This is a custom build from [open-runtime/opencode](https://github.com/open-runtime/opencode).
+
+            ### Downloads
+
+            | Platform | Architecture | Download |
+            |----------|--------------|----------|
+            | Linux | x64 | `opencode-linux-x64.tar.gz` |
+            | macOS | x64 (Intel) | `opencode-darwin-x64.zip` |
+            | macOS | arm64 (Apple Silicon) | `opencode-darwin-arm64.zip` |
+            | Windows | x64 | `opencode-windows-x64.zip` |
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x64
-            artifact_ext: tar.gz
-          - os: ubuntu-latest
-            target: linux-arm64
-            artifact_ext: tar.gz
+            platform: linux
+            arch: x64
+            ext: tar.gz
           - os: macos-latest
-            target: darwin-arm64
-            artifact_ext: zip
+            platform: darwin
+            arch: arm64
+            ext: zip
           - os: macos-13
-            target: darwin-x64
-            artifact_ext: zip
+            platform: darwin
+            arch: x64
+            ext: zip
           - os: windows-latest
-            target: windows-x64
-            artifact_ext: zip
+            platform: windows
+            arch: x64
+            ext: zip
 
     runs-on: ${{ matrix.os }}
 
@@ -55,134 +96,57 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Determine version
-        id: version
+      - name: Build CLI
+        run: |
+          cd packages/opencode
+          bun run script/build.ts --single
+        env:
+          OPENCODE_VERSION: ${{ needs.create-release.outputs.version }}
+          OPENCODE_CHANNEL: latest
+
+      - name: List dist directory
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            # Extract version from tag (e.g., v1.1.48 -> 1.1.48)
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
+          echo "Contents of packages/opencode/dist:"
+          ls -la packages/opencode/dist/ || echo "dist directory not found"
+          echo "Looking for opencode-${{ matrix.platform }}-${{ matrix.arch }}:"
+          ls -la packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/ || echo "target directory not found"
 
-      - name: Build CLI (Linux x64)
-        if: matrix.target == 'linux-x64'
+      - name: Package artifact (tar.gz)
+        if: matrix.ext == 'tar.gz'
         run: |
-          cd packages/opencode
-          bun run script/build.ts --single
-        env:
-          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
-          OPENCODE_CHANNEL: latest
+          cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
+          tar -czf ../../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz *
 
-      - name: Build CLI (Linux arm64)
-        if: matrix.target == 'linux-arm64'
+      - name: Package artifact (zip - Unix)
+        if: matrix.ext == 'zip' && matrix.os != 'windows-latest'
         run: |
-          cd packages/opencode
-          # For cross-compilation, we build with target specified
-          bun run script/build.ts --single
-        env:
-          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
-          OPENCODE_CHANNEL: latest
+          cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
+          zip -r ../../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip *
 
-      - name: Build CLI (macOS)
-        if: startsWith(matrix.target, 'darwin')
+      - name: Package artifact (zip - Windows)
+        if: matrix.ext == 'zip' && matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          cd packages/opencode
-          bun run script/build.ts --single
-        env:
-          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
-          OPENCODE_CHANNEL: latest
+          cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
+          Compress-Archive -Path * -DestinationPath ../../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip
 
-      - name: Build CLI (Windows)
-        if: matrix.target == 'windows-x64'
-        run: |
-          cd packages/opencode
-          bun run script/build.ts --single
-        env:
-          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
-          OPENCODE_CHANNEL: latest
-
-      - name: Package artifact (Linux)
-        if: contains(matrix.target, 'linux')
-        run: |
-          cd packages/opencode/dist
-          DIST_DIR=$(ls -d */ | head -1)
-          cd "$DIST_DIR/bin"
-          tar -czf ../../../opencode-${{ matrix.target }}.tar.gz *
-
-      - name: Package artifact (macOS/Windows)
-        if: "!contains(matrix.target, 'linux')"
-        shell: bash
-        run: |
-          cd packages/opencode/dist
-          DIST_DIR=$(ls -d */ | head -1)
-          cd "$DIST_DIR/bin"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../opencode-${{ matrix.target }}.zip *
-          else
-            zip -r ../../../opencode-${{ matrix.target }}.zip *
-          fi
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: opencode-${{ matrix.target }}
-          path: packages/opencode/dist/opencode-${{ matrix.target }}.${{ matrix.artifact_ext }}
-          retention-days: 1
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: List artifacts
-        run: ls -la artifacts/
-
-      - name: Create Release
+      - name: Upload to release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: OpenCode Fork v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  finalize-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.create-release.outputs.version }}
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          files: |
-            artifacts/opencode-linux-x64.tar.gz
-            artifacts/opencode-linux-arm64.tar.gz
-            artifacts/opencode-darwin-x64.zip
-            artifacts/opencode-darwin-arm64.zip
-            artifacts/opencode-windows-x64.zip
-          body: |
-            ## OpenCode Fork Release v${{ steps.version.outputs.version }}
-
-            This is a custom build from [open-runtime/opencode](https://github.com/open-runtime/opencode).
-
-            ### Downloads
-
-            | Platform | Architecture | Download |
-            |----------|--------------|----------|
-            | Linux | x64 | `opencode-linux-x64.tar.gz` |
-            | Linux | arm64 | `opencode-linux-arm64.tar.gz` |
-            | macOS | x64 (Intel) | `opencode-darwin-x64.zip` |
-            | macOS | arm64 (Apple Silicon) | `opencode-darwin-arm64.zip` |
-            | Windows | x64 | `opencode-windows-x64.zip` |
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
