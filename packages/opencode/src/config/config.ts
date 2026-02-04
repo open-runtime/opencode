@@ -33,6 +33,16 @@ import { PackageRegistry } from "@/bun/registry"
 export namespace Config {
   const log = Log.create({ service: "config" })
 
+  /**
+   * Extracts the base semantic version from a version string.
+   * Handles custom fork version strings like "1.1.48-open-runtime-fork.5" → "1.1.48"
+   * This allows the fork to use the official @opencode-ai/plugin package.
+   */
+  function getPluginVersion(version: string): string {
+    const match = version.match(/^(\d+\.\d+\.\d+)/)
+    return match ? match[1] : version
+  }
+
   // Managed settings directory for enterprise deployments (highest priority, admin-controlled)
   // These settings override all user and project settings
   function getManagedConfigDir(): string {
@@ -237,7 +247,7 @@ export namespace Config {
 
   export async function installDependencies(dir: string) {
     const pkg = path.join(dir, "package.json")
-    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
+    const targetVersion = Installation.isLocal() ? "latest" : getPluginVersion(Installation.VERSION)
 
     if (!(await Bun.file(pkg).exists())) {
       await Bun.write(pkg, "{}")
@@ -270,7 +280,7 @@ export namespace Config {
     const depVersion = dependencies["@opencode-ai/plugin"]
     if (!depVersion) return true
 
-    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
+    const targetVersion = Installation.isLocal() ? "latest" : getPluginVersion(Installation.VERSION)
     if (targetVersion === "latest") {
       const isOutdated = await PackageRegistry.isOutdated("@opencode-ai/plugin", depVersion, dir)
       if (!isOutdated) return false
