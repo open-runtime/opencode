@@ -45,7 +45,7 @@ export namespace Plugin {
         try {
           model = await Provider.getModel(modelSpec.providerID, modelSpec.modelID)
         } catch {
-          // Create a fallback model with the required api.npm field for SDK loading
+          // Create a fallback model with all required fields for SDK loading
           // Map known provider IDs to their SDK npm packages
           const providerNpmPackages: Record<string, string> = {
             openrouter: "@openrouter/ai-sdk-provider",
@@ -65,13 +65,39 @@ export namespace Plugin {
             perplexity: "@ai-sdk/perplexity",
           }
           const npm = providerNpmPackages[modelSpec.providerID] ?? "@ai-sdk/openai-compatible"
+
+          // Create a complete fallback model with sensible defaults
           model = {
             providerID: modelSpec.providerID,
             id: modelSpec.modelID,
+            name: modelSpec.modelID,
             api: {
               id: modelSpec.modelID,
+              url: "", // Will be resolved by the SDK
               npm,
             },
+            capabilities: {
+              temperature: true,
+              reasoning: false,
+              attachment: true,
+              toolcall: true,
+              input: { text: true, audio: false, image: true, video: false, pdf: false },
+              output: { text: true, audio: false, image: false, video: false, pdf: false },
+              interleaved: true,
+            },
+            cost: {
+              input: 0,
+              output: 0,
+              cache: { read: 0, write: 0 },
+            },
+            limit: {
+              context: 128000,
+              output: 8192,
+            },
+            status: "active",
+            options: {},
+            headers: {},
+            release_date: new Date().toISOString().split("T")[0],
           } as Provider.Model
         }
 
