@@ -45,7 +45,34 @@ export namespace Plugin {
         try {
           model = await Provider.getModel(modelSpec.providerID, modelSpec.modelID)
         } catch {
-          model = { providerID: modelSpec.providerID, id: modelSpec.modelID } as Provider.Model
+          // Create a fallback model with the required api.npm field for SDK loading
+          // Map known provider IDs to their SDK npm packages
+          const providerNpmPackages: Record<string, string> = {
+            openrouter: "@openrouter/ai-sdk-provider",
+            anthropic: "@ai-sdk/anthropic",
+            openai: "@ai-sdk/openai",
+            google: "@ai-sdk/google",
+            bedrock: "@ai-sdk/amazon-bedrock",
+            azure: "@ai-sdk/azure",
+            vertex: "@ai-sdk/google-vertex",
+            xai: "@ai-sdk/xai",
+            mistral: "@ai-sdk/mistral",
+            groq: "@ai-sdk/groq",
+            deepinfra: "@ai-sdk/deepinfra",
+            cerebras: "@ai-sdk/cerebras",
+            cohere: "@ai-sdk/cohere",
+            togetherai: "@ai-sdk/togetherai",
+            perplexity: "@ai-sdk/perplexity",
+          }
+          const npm = providerNpmPackages[modelSpec.providerID] ?? "@ai-sdk/openai-compatible"
+          model = {
+            providerID: modelSpec.providerID,
+            id: modelSpec.modelID,
+            api: {
+              id: modelSpec.modelID,
+              npm,
+            },
+          } as Provider.Model
         }
 
         let agent: Agent.Info
