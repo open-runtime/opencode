@@ -126,20 +126,20 @@ jobs:
         if: matrix.ext == 'tar.gz'
         run: |
           cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
-          tar -czf ../../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz *
+          tar -czf ../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz *
 
       - name: Package artifact (zip - Unix)
         if: matrix.ext == 'zip' && matrix.os != 'windows-latest'
         run: |
           cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
-          zip -r ../../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip *
+          zip -r ../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip *
 
       - name: Package artifact (zip - Windows)
         if: matrix.ext == 'zip' && matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
-          Compress-Archive -Path * -DestinationPath ../../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path * -DestinationPath ../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
