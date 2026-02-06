@@ -141,26 +141,40 @@ export namespace Plugin {
           usage = (await result.usage) ?? usage
         } catch (e) {
           log.error("runtime stream error", { error: e })
+          // Propagate the error so the generated plugin can send an error
+          // response to Dart instead of a success with empty text.
+          throw e
         }
 
         return { text: finalText, usage }
       },
 
       getProviders: async () => {
+        // Provider.list() returns Record<string, Info>, not an Array.
         const providers = await Provider.list()
-        return providers.map((p) => ({
-          id: p.id ?? "",
-          name: p.name ?? p.id ?? "",
+        return Object.values(providers).map((p) => ({
+          id: p.id,
+          name: p.name ?? p.id,
         }))
       },
 
       getModels: async (providerID?: string) => {
-        const models = providerID ? await Provider.listModels(providerID) : await Provider.listModels()
-        return models.map((m) => ({
-          id: m.id ?? "",
-          provider: m.providerID ?? "",
-          name: m.name ?? m.id ?? "",
-        }))
+        // Provider.listModels() does not exist. Iterate Provider.list()
+        // and extract models from each provider's Info.models record.
+        const providers = await Provider.list()
+        const allModels: Array<{ id: string; provider: string; name: string }> = []
+        const target = providerID ? { [providerID]: providers[providerID] } : providers
+        for (const [pid, provider] of Object.entries(target)) {
+          if (!provider) continue
+          for (const model of Object.values(provider.models)) {
+            allModels.push({
+              id: model.id,
+              provider: model.providerID ?? pid,
+              name: model.name ?? model.id,
+            })
+          }
+        }
+        return allModels
       },
     }
 
