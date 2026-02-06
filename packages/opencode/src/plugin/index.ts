@@ -101,12 +101,12 @@ export namespace Plugin {
           } as Provider.Model
         }
 
-        let agent: Agent.Info
-        try {
-          agent = (await Agent.get("title")) ?? (await Agent.get("coder"))!
-        } catch {
-          agent = { name: "runtime", id: "runtime" } as Agent.Info
-        }
+        // Use a neutral agent with no prompt to avoid contaminating the
+        // system prompt. The "title" agent was previously used here, which
+        // prepended title-generation instructions before the caller's
+        // system prompt, causing models to generate titles instead of
+        // following the actual instruction.
+        const agent = { name: "runtime", id: "runtime" } as Agent.Info
 
         const requestId = crypto.randomUUID()
         const result = await LLM.stream({
