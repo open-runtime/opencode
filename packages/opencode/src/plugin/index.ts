@@ -19,7 +19,13 @@ import * as crypto from "crypto"
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
 
-  const BUILTIN = ["opencode-anthropic-auth@0.0.13", "@gitlab/opencode-gitlab-auth@1.3.2"]
+  // Default third-party auth plugins from upstream OpenCode.
+  // Cleared for our fork: these are unnecessary for our embedded runtime use case
+  // and cause intermittent ERR_MODULE_NOT_FOUND failures when Bun's compiled
+  // binary can't resolve npm packages installed at runtime from /$bunfs/.
+  // They also add ~1.5s of startup latency (npm install + module resolution).
+  // Our auth is handled by the host Dart process, not by these plugins.
+  const BUILTIN: string[] = []
 
   // Built-in plugins that are directly imported (not installed from npm)
   const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin]
