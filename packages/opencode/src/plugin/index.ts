@@ -50,7 +50,7 @@ export namespace Plugin {
     // Create the runtime API for plugin LLM access
     const runtime: RuntimeAPI = {
       stream: async function* (params) {
-        const modelSpec = params.model ?? (await Provider.defaultModel?.()) ?? {
+        const modelSpec = params.model ?? (await Provider.defaultModel().catch(() => null)) ?? {
           providerID: ProviderID.make("anthropic"),
           modelID: ModelID.make("claude-sonnet-4-20250514"),
         }
@@ -125,6 +125,7 @@ export namespace Plugin {
           mode: "primary",
           permission: [],
           options: {},
+          ...(params.temperature !== undefined && { temperature: params.temperature }),
         } as Agent.Info
 
         const requestId = crypto.randomUUID()
