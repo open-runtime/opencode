@@ -59,6 +59,24 @@ export namespace Plugin {
         try {
           model = await Provider.getModel(modelSpec.providerID, modelSpec.modelID)
         } catch {
+          // Before constructing a fallback model, verify the provider actually
+          // exists in state.  If it doesn't, `Provider.getLanguage()` and
+          // `Provider.getProvider()` in LLM.stream() will crash when accessing
+          // `provider.options` on `undefined`.
+          let providerExists
+          try {
+            providerExists = await Provider.getProvider(modelSpec.providerID)
+          } catch {
+            providerExists = undefined
+          }
+          if (!providerExists) {
+            throw new Error(
+              `Provider "${modelSpec.providerID}" is not configured. ` +
+              `Available providers can be listed via runtime.getProviders(). ` +
+              `Configure the provider in your opencode config before calling stream().`
+            )
+          }
+
           // Create a fallback model with all required fields for SDK loading
           // Map known provider IDs to their SDK npm packages
           const providerNpmPackages: Record<string, string> = {

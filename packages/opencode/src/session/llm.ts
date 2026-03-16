@@ -58,10 +58,18 @@ export namespace LLM {
       modelID: input.model.id,
       providerID: input.model.providerID,
     })
-    const [language, cfg, provider, auth] = await Promise.all([
+    const provider = await Provider.getProvider(input.model.providerID)
+    if (!provider) {
+      throw new Error(
+        `Provider "${input.model.providerID}" is not configured. ` +
+        `Available providers can be listed via getProviders(). ` +
+        `Configure the provider in your opencode config before calling stream().`
+      )
+    }
+
+    const [language, cfg, auth] = await Promise.all([
       Provider.getLanguage(input.model),
       Config.get(),
-      Provider.getProvider(input.model.providerID),
       Auth.get(input.model.providerID),
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
