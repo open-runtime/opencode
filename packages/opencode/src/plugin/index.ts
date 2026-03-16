@@ -11,9 +11,12 @@ import { CodexAuthPlugin } from "./codex"
 import { Session } from "../session"
 import { NamedError } from "@opencode-ai/util/error"
 import { CopilotAuthPlugin } from "./copilot"
+import { gitlabAuthPlugin as GitlabAuthPlugin } from "@gitlab/opencode-gitlab-auth"
 import { LLM } from "../session/llm"
 import { Provider } from "../provider/provider"
 import { Agent } from "../agent/agent"
+import { SessionID, MessageID } from "../session/schema"
+import { ProviderID, ModelID } from "../provider/schema"
 import * as crypto from "crypto"
 
 export namespace Plugin {
@@ -28,13 +31,18 @@ export namespace Plugin {
   const BUILTIN: string[] = []
 
   // Built-in plugins that are directly imported (not installed from npm)
-  const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin]
+  const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin, GitlabAuthPlugin]
 
   const state = Instance.state(async () => {
     const client = createOpencodeClient({
       baseUrl: "http://localhost:4096",
-      // @ts-ignore - fetch type incompatibility
-      fetch: async (...args) => Server.App().fetch(...args),
+      directory: Instance.directory,
+      headers: Flag.OPENCODE_SERVER_PASSWORD
+        ? {
+            Authorization: `Basic ${Buffer.from(`${Flag.OPENCODE_SERVER_USERNAME ?? "opencode"}:${Flag.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`,
+          }
+        : undefined,
+      fetch: async (...args) => Server.Default().fetch(...args),
     })
     const config = await Config.get()
     const hooks: Hooks[] = []
@@ -43,8 +51,8 @@ export namespace Plugin {
     const runtime: RuntimeAPI = {
       stream: async function* (params) {
         const modelSpec = params.model ?? (await Provider.defaultModel?.()) ?? {
-          providerID: "anthropic",
-          modelID: "claude-sonnet-4-20250514",
+          providerID: ProviderID.make("anthropic"),
+          modelID: ModelID.make("claude-sonnet-4-20250514"),
         }
 
         let model: Provider.Model
@@ -112,16 +120,22 @@ export namespace Plugin {
         // prepended title-generation instructions before the caller's
         // system prompt, causing models to generate titles instead of
         // following the actual instruction.
-        const agent = { name: "runtime", id: "runtime" } as Agent.Info
+        const agent = {
+          name: "runtime",
+          mode: "primary",
+          permission: [],
+          options: {},
+        } as Agent.Info
 
         const requestId = crypto.randomUUID()
         const result = await LLM.stream({
           agent,
           user: {
-            id: crypto.randomUUID(),
+            id: MessageID.make(crypto.randomUUID()),
             role: "user",
-            sessionID: `plugin-runtime-${requestId}`,
+            sessionID: SessionID.make(`plugin-runtime-${requestId}`),
             model: modelSpec,
+            agent: "runtime",
             time: { created: Date.now() },
           },
           system: params.systemPrompt ? [params.systemPrompt] : [],
@@ -129,7 +143,7 @@ export namespace Plugin {
           tools: {},
           model,
           abort: new AbortController().signal,
-          sessionID: `plugin-runtime-${requestId}`,
+          sessionID: SessionID.make(`plugin-runtime-${requestId}`),
           retries: 2,
           messages: [{ role: "user", content: params.prompt }],
         })
@@ -189,20 +203,25 @@ export namespace Plugin {
       project: Instance.project,
       worktree: Instance.worktree,
       directory: Instance.directory,
-      serverUrl: Server.url(),
+      get serverUrl(): URL {
+        return Server.url ?? new URL("http://localhost:4096")
+      },
       $: Bun.$,
       runtime,
     }
 
     for (const plugin of INTERNAL_PLUGINS) {
       log.info("loading internal plugin", { name: plugin.name })
-      const init = await plugin(input)
-      hooks.push(init)
+      const init = await plugin(input).catch((err) => {
+        log.error("failed to load internal plugin", { name: plugin.name, error: err })
+      })
+      if (init) hooks.push(init)
     }
 
-    const plugins = [...(config.plugin ?? [])]
+    let plugins = config.plugin ?? []
+    if (plugins.length) await Config.waitForDependencies()
     if (!Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS) {
-      plugins.push(...BUILTIN)
+      plugins = [...BUILTIN, ...plugins]
     }
 
     for (let plugin of plugins) {
@@ -213,37 +232,40 @@ export namespace Plugin {
         const lastAtIndex = plugin.lastIndexOf("@")
         const pkg = lastAtIndex > 0 ? plugin.substring(0, lastAtIndex) : plugin
         const version = lastAtIndex > 0 ? plugin.substring(lastAtIndex + 1) : "latest"
-        const builtin = BUILTIN.some((x) => x.startsWith(pkg + "@"))
         plugin = await BunProc.install(pkg, version).catch((err) => {
-          if (!builtin) throw err
-
-          const message = err instanceof Error ? err.message : String(err)
-          log.error("failed to install builtin plugin", {
-            pkg,
-            version,
-            error: message,
-          })
+          const cause = err instanceof Error ? err.cause : err
+          const detail = cause instanceof Error ? cause.message : String(cause ?? err)
+          log.error("failed to install plugin", { pkg, version, error: detail })
           Bus.publish(Session.Event.Error, {
             error: new NamedError.Unknown({
-              message: `Failed to install built-in plugin ${pkg}@${version}: ${message}`,
+              message: `Failed to install plugin ${pkg}@${version}: ${detail}`,
             }).toObject(),
           })
-
           return ""
         })
         if (!plugin) continue
       }
-      const mod = await import(plugin)
       // Prevent duplicate initialization when plugins export the same function
       // as both a named export and default export (e.g., `export const X` and `export default X`).
       // Object.entries(mod) would return both entries pointing to the same function reference.
-      const seen = new Set<PluginInstance>()
-      for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
-        if (seen.has(fn)) continue
-        seen.add(fn)
-        const init = await fn(input)
-        hooks.push(init)
-      }
+      await import(plugin)
+        .then(async (mod) => {
+          const seen = new Set<PluginInstance>()
+          for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
+            if (seen.has(fn)) continue
+            seen.add(fn)
+            hooks.push(await fn(input))
+          }
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err)
+          log.error("failed to load plugin", { path: plugin, error: message })
+          Bus.publish(Session.Event.Error, {
+            error: new NamedError.Unknown({
+              message: `Failed to load plugin ${plugin}: ${message}`,
+            }).toObject(),
+          })
+        })
     }
 
     return {
