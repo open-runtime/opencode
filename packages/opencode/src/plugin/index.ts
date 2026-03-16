@@ -147,6 +147,7 @@ export namespace Plugin {
           sessionID: SessionID.make(`plugin-runtime-${requestId}`),
           retries: 2,
           messages: [{ role: "user", content: params.prompt }],
+          ...(params.maxTokens !== undefined && { maxOutputTokens: params.maxTokens }),
         })
 
         let finalText = ""

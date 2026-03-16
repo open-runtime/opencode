@@ -39,6 +39,8 @@ export namespace LLM {
     tools: Record<string, Tool>
     retries?: number
     toolChoice?: "auto" | "required" | "none"
+    /** Override max output tokens (used by RuntimeAPI plugin callers). */
+    maxOutputTokens?: number
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -145,7 +147,9 @@ export namespace LLM {
     )
 
     const maxOutputTokens =
-      isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
+      isCodex || provider.id.includes("github-copilot")
+        ? undefined
+        : input.maxOutputTokens ?? ProviderTransform.maxOutputTokens(input.model)
 
     const tools = await resolveTools(input)
 
