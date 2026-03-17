@@ -56,6 +56,7 @@ jobs:
             | macOS | x64 (Intel) | `opencode-darwin-x64.zip` |
             | macOS | arm64 (Apple Silicon) | `opencode-darwin-arm64.zip` |
             | Windows | x64 | `opencode-windows-x64.zip` |
+            | Windows | arm64 | `opencode-windows-arm64.zip` |
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -89,6 +90,11 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x64
+            ext: zip
+          # Windows ARM64 - GitHub ARM runner
+          - os: windows-11-arm
+            platform: windows
+            arch: arm64
             ext: zip
 
     runs-on: ${{ matrix.os }}
@@ -129,13 +135,13 @@ jobs:
           tar -czf ../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz *
 
       - name: Package artifact (zip - Unix)
-        if: matrix.ext == 'zip' && matrix.os != 'windows-latest'
+        if: matrix.ext == 'zip' && matrix.platform != 'windows'
         run: |
           cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
           zip -r ../../opencode-${{ matrix.platform }}-${{ matrix.arch }}.zip *
 
       - name: Package artifact (zip - Windows)
-        if: matrix.ext == 'zip' && matrix.os == 'windows-latest'
+        if: matrix.ext == 'zip' && matrix.platform == 'windows'
         shell: pwsh
         run: |
           cd packages/opencode/dist/opencode-${{ matrix.platform }}-${{ matrix.arch }}/bin
