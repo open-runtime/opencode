@@ -48,6 +48,7 @@ import { Installation } from "../installation"
 import { ModelID, ProviderID } from "./schema"
 
 const DEFAULT_CHUNK_TIMEOUT = 300_000
+const DEFAULT_CONNECTION_TIMEOUT = 30_000 // 30s to receive the first byte from the LLM provider
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -1193,14 +1194,21 @@ export namespace Provider {
         const fetchFn = customFetch ?? fetch
         const opts = init ?? {}
         const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
-        const signals: AbortSignal[] = []
+        // Connection timeout: abort if the provider doesn't respond within DEFAULT_CONNECTION_TIMEOUT.
+        // This is separate from chunkTimeout (which monitors gaps between SSE chunks AFTER the
+        // stream starts). The connection timeout prevents indefinite hangs when a provider accepts
+        // the TCP connection but never sends the first byte (queued request, overloaded endpoint).
+        // It is cleared as soon as the response arrives so it doesn't interfere with long streams.
+        const connectionAbortCtl = new AbortController()
+        const connectionTimer = setTimeout(() => connectionAbortCtl.abort(new Error("LLM connection timed out")), DEFAULT_CONNECTION_TIMEOUT)
+        const signals: AbortSignal[] = [connectionAbortCtl.signal]
 
         if (opts.signal) signals.push(opts.signal)
         if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
         if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
           signals.push(AbortSignal.timeout(options["timeout"]))
 
-        const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+        const combined = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
         if (combined) opts.signal = combined
 
         // Strip openai itemId metadata following what codex does
@@ -1226,6 +1234,10 @@ export namespace Provider {
           // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
           timeout: false,
         })
+
+        // First byte received — clear the connection timeout so it doesn't
+        // interfere with long-running SSE streams. chunkTimeout takes over from here.
+        clearTimeout(connectionTimer)
 
         if (!chunkAbortCtl) return res
         return wrapSSE(res, chunkTimeout, chunkAbortCtl)

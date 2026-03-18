@@ -618,10 +618,17 @@ export namespace MCP {
       ([clientName]) => s.status[clientName]?.status === "connected",
     )
 
+    const LIST_TOOLS_TIMEOUT = 15_000 // 15s per server — prevents indefinite hang on unresponsive MCP servers
+
     const toolsResults = await Promise.all(
       connectedClients.map(async ([clientName, client]) => {
-        const toolsResult = await client.listTools().catch((e) => {
-          log.error("failed to get tools", { clientName, error: e.message })
+        const toolsResult = await Promise.race([
+          client.listTools(),
+          new Promise<undefined>((_, reject) =>
+            setTimeout(() => reject(new Error(`listTools timed out after ${LIST_TOOLS_TIMEOUT}ms`)), LIST_TOOLS_TIMEOUT),
+          ),
+        ]).catch((e) => {
+          log.error("failed to get tools", { clientName, error: e instanceof Error ? e.message : String(e) })
           const failedStatus = {
             status: "failed" as const,
             error: e instanceof Error ? e.message : String(e),
